@@ -23,7 +23,7 @@ from urllib.parse import SplitResult, urlsplit, urlunsplit
 
 import requests
 
-from agent.secret_scope import get_secret
+from agent.secret_scope import get_secret, load_env_file, serves_routed_profile
 from hermes_cli.config import cfg_get, read_raw_config
 from hermes_constants import get_hermes_home, hermes_home_key
 
@@ -46,9 +46,60 @@ def get_camofox_url() -> str:
     return _env("CAMOFOX_URL").rstrip("/")
 
 
+def _local_auth_key() -> str:
+    """Single-profile loopback fallback, never a bypass of routed secret scopes.
+
+    Adapted from the pre-plugin core implementation preserved in stash object
+    4e1c5ed6 (tools/browser_camofox.py). Single-profile local daemons may provision
+    their client token in secrets/camofox-auth.env or secrets/web-access.env.
+    Routed/multiplex callers must instead provision their key in the secret scope.
+    """
+    # A scope miss must not discover credentials outside the routed mapping, even
+    # when a binder omitted the home override. Multiplex callers provision their
+    # key in the scope instead. Named single-profile homes still work normally.
+    if serves_routed_profile():
+        return ""
+    try:
+        raw = get_camofox_url()
+        # urlsplit tolerates/strips controls and empty ports; a credential fallback
+        # must reject malformed authority syntax rather than repair it.
+        if any(ord(c) <= 32 or ord(c) == 127 for c in raw):
+            return ""
+        endpoint = urlsplit(raw)
+        if (endpoint.scheme not in {"http", "https"}
+                or endpoint.hostname not in {"localhost", "127.0.0.1", "::1"}
+                or endpoint.username is not None or endpoint.password is not None
+                or endpoint.query or endpoint.fragment):
+            return ""
+        authority = '[::1]' if endpoint.hostname == '::1' else endpoint.hostname
+        port = endpoint.port  # Validate before reading any credential.
+        if port is not None:
+            if port == 0:
+                return ""
+            suffix = endpoint.netloc[len(authority):]
+            if not suffix.startswith(':') or not suffix[1:].isascii() or not suffix[1:].isdecimal():
+                return ""
+        elif endpoint.netloc.lower() != authority:
+            return ""
+    except ValueError:
+        return ""
+    for name in ("camofox-auth.env", "web-access.env"):
+        key = load_env_file(get_hermes_home() / "secrets" / name).get("CAMOFOX_API_KEY", "").strip()
+        if key:
+            return key
+    return ""
+
+
 def _auth_headers() -> dict[str, str]:
-    """``Authorization: Bearer`` when ``CAMOFOX_API_KEY`` is set."""
-    key = _env("CAMOFOX_API_KEY")
+    """``Authorization: Bearer <key>`` when a key is resolved from any precedence tier.
+
+    Explicit scoped/env credentials first (``get_secret``, same precedence as every other
+    Camofox value); local single-profile daemon token files second. ``get_secret`` is left
+    to raise ``UnscopedSecretError`` on an unscoped multiplex read instead of being caught
+    here: a scope bug must fail closed and loudly, not silently fall through to a local
+    file read that could leak a sibling profile's daemon token.
+    """
+    key = _env("CAMOFOX_API_KEY") or _local_auth_key()
     return {"Authorization": f"Bearer {key}"} if key else {}
 
 

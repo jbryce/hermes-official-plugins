@@ -211,6 +211,44 @@ class _RepoRootIsNotATestPackage:
         return None
 
 
+def pytest_addoption(parser):
+    import os
+    parser.addoption("--web-access-root", default=os.environ.get("WEB_ACCESS_TEST_ROOT"),
+                     help="Explicit web-access skill checkout for synthetic sidecar integration tests")
+
+
 def pytest_configure(config):
     if not config.pluginmanager.has_plugin("camofox-repo-root"):
         config.pluginmanager.register(_RepoRootIsNotATestPackage(), "camofox-repo-root")
+    root = config.getoption("--web-access-root")
+    if root:
+        scripts = Path(root).expanduser().resolve() / "scripts"
+        if not (scripts / "server_camofox.py").is_file():
+            raise pytest.UsageError("--web-access-root must contain scripts/server_camofox.py")
+        sys.path.insert(0, str(scripts))
+        import server_camofox
+        if Path(server_camofox.__file__).resolve() != scripts / "server_camofox.py":
+            raise pytest.UsageError("server_camofox already imported from a different checkout")
+
+
+def pytest_ignore_collect(collection_path, config):
+    # Explicit list: core-only operation ownership tests must still collect.
+    integration = {"test_sidecar_compat.py", "test_metadata_boundary.py",
+                   "test_sidecar_tab_field_redaction.py", "test_sidecar_password.py",
+                   "test_sidecar_password_browser.py", "test_sidecar_password_review.py"}
+    if collection_path.name in integration and not config.getoption("--web-access-root"):
+        return True
+
+
+def pytest_report_header(config):
+    import agent
+    import camofox_plugin
+    from camofox_plugin import camofox_client, camofox_tools
+    paths = [agent.__file__, camofox_plugin.__file__, camofox_client.__file__, camofox_tools.__file__]
+    if config.getoption("--web-access-root"):
+        import server_camofox
+        import server_vault
+        paths.extend([server_camofox.__file__, server_vault.__file__])
+    else:
+        paths.append("Sidecar integration not collected: supply --web-access-root or WEB_ACCESS_TEST_ROOT")
+    return ["Compatibility source: " + str(path) for path in paths]

@@ -40,6 +40,18 @@ def make_page_backend():
         name = "camofox"
         display_name = "Camofox"
 
+        def operation(self, task_id: str):
+            if client.get_camofox_config().get('vault_transport') == 'sidecar':
+                from .camofox_vault_sidecar import operation
+                return operation(task_id)
+            return super().operation(task_id)
+
+        def owns_task(self, task_id: str) -> bool:
+            # Explicit protected-transport selection is a routing claim, not a
+            # health probe. An absent tab/URL must refuse, never select CDP.
+            return (client.get_camofox_config().get('vault_transport') == 'sidecar'
+                    or self.has_page(task_id))
+
         def has_page(self, task_id: str) -> bool:
             session = _tracked_session(task_id)
             return bool(client.get_camofox_url() and session and session.get("tab_id"))

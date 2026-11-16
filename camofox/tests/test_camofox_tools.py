@@ -136,7 +136,9 @@ class TestTabTools:
     def test_snapshot(self, camofox):
         t.browser_navigate("https://example.com", task_id="t1")
         result = _j(t.browser_snapshot(task_id="t1"))
+        identity = result.pop("session_identity")
         assert result == {"success": True, "snapshot": camofox.snapshot, "element_count": 2}
+        assert identity["tabId"] and identity["userId"] and identity["listItemId"] == "task_t1"
 
     def test_oversized_snapshot_is_cut_and_stored(self, camofox, write_config):
         write_config("browser:\n  snapshot_threshold: 1000\n")

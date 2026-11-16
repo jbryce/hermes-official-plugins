@@ -210,7 +210,10 @@ def browser_navigate(url: str, task_id: Optional[str] = None) -> str:
 def browser_snapshot(task_id: Optional[str] = None) -> str:
     def body(session):
         snapshot, refs_count = _fetch_snapshot(session)
-        return _dumps({"success": True, "snapshot": snapshot, "element_count": refs_count})
+        return _dumps({"success": True, "snapshot": snapshot, "element_count": refs_count,
+                       # Routing metadata only; never project the raw session dict.
+                       "session_identity": {"tabId": session["tab_id"], "userId": session["user_id"],
+                                            "listItemId": session["session_key"]}})
     return _with_tab(task_id, body, read_only=True)
 
 
