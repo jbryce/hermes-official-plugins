@@ -348,6 +348,30 @@ def _session_key(task_id: Optional[str]) -> tuple[str, str]:
     return hermes_home_key(), task_id or "default"
 
 
+def set_session_tab(session: dict[str, Any], tab_id) -> None:
+    """Publish a new selection generation; never hold the lock during HTTP."""
+    with _sessions_lock:
+        session['_binding_generation'] = session.get('_binding_generation', 0) + 1
+        session['tab_id'] = tab_id
+
+
+def binding_snapshot(task_id):
+    """Capture object identity as well as generation to reject remove/recreate ABA."""
+    with _sessions_lock:
+        session = _sessions.get(_session_key(task_id))
+        return session, dict(session or {})
+
+
+def binding_valid(task_id, snapshot):
+    # Caller holds _sessions_lock: validation is the dispatch admission point,
+    # ordered against every production mapping publication/removal.
+    session, state = snapshot
+    current = _sessions.get(_session_key(task_id))
+    return current is session and current is not None and all(
+        current.get(k) == state.get(k)
+        for k in ('_binding_generation', 'tab_id', 'user_id', 'session_key'))
+
+
 def tab_path(session: dict[str, Any], suffix: str) -> str:
     return f"/tabs/{session['tab_id']}/{suffix}"
 
@@ -372,7 +396,7 @@ def _adopt_existing_tab(session: dict[str, Any]) -> dict[str, Any]:
     candidates = [tab for tab in dict_tabs if tab.get("listItemId") == session.get("session_key")]
     tab_id = candidates[-1].get("tabId") if candidates else None
     if isinstance(tab_id, str) and tab_id:
-        session["tab_id"] = tab_id
+        set_session_tab(session, tab_id)
         logger.debug("Adopted existing Camofox tab %s for %s", tab_id, session.get("user_id"))
     return session
 
@@ -420,7 +444,7 @@ def resync_tab(session: dict[str, Any]) -> bool:
     if any(tab.get("tabId") == session.get("tab_id") for tab in live):
         return True
     mine = [tab for tab in live if tab.get("listItemId") == session.get("session_key")]
-    session["tab_id"] = mine[-1]["tabId"] if mine else None
+    set_session_tab(session, mine[-1]["tabId"] if mine else None)
     return bool(mine)
 
 
@@ -433,7 +457,7 @@ def ensure_tab(task_id: Optional[str], url: str = "about:blank") -> tuple[dict[s
     session = get_session(task_id)
     if not session["tab_id"]:
         data = create_tab({"userId": session["user_id"], "listItemId": session["session_key"], "url": url})
-        session["tab_id"] = data.get("tabId")
+        set_session_tab(session, data.get("tabId"))
         return session, data
     return session, {}
 
@@ -441,7 +465,10 @@ def ensure_tab(task_id: Optional[str], url: str = "about:blank") -> tuple[dict[s
 def drop_session(task_id: Optional[str]) -> Optional[dict[str, Any]]:
     """Remove and return the task's session entry for the active profile."""
     with _sessions_lock:
-        return _sessions.pop(_session_key(task_id), None)
+        session = _sessions.pop(_session_key(task_id), None)
+        if session is not None:
+            session['_binding_generation'] = session.get('_binding_generation', 0) + 1
+        return session
 
 
 def soft_cleanup(task_id: Optional[str] = None) -> bool:

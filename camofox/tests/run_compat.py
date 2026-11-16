@@ -33,7 +33,8 @@ def main():
     allowed = ('PATH', 'HOME', 'TMPDIR', 'DISPLAY', 'XAUTHORITY', 'LANG', 'PYTHONPATH')
     env = {name: os.environ[name] for name in allowed if name in os.environ}
     env.update(PYTEST_DISABLE_PLUGIN_AUTOLOAD='1', PYTHONDONTWRITEBYTECODE='1',
-               WEB_ACCESS_TEST_ROOT=str(sidecar))
+               WEB_ACCESS_TEST_ROOT=str(sidecar), CAMOFOX_PLUGIN_TEST_ROOT=str(plugin),
+               HERMES_CORE_TEST_ROOT=str(core))
     env['PYTHONPATH'] = os.pathsep.join([str(core), str(sidecar / 'scripts'), env.get('PYTHONPATH', '')])
     with tempfile.TemporaryDirectory(prefix='camofox-compat-') as temporary:
         env['HERMES_HOME'] = str(Path(temporary) / 'home')

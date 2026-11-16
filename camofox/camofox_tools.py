@@ -72,7 +72,7 @@ def _navigate_tab(task_id: Optional[str], browser_url: str) -> tuple[dict[str, A
                 raise
             logger.warning("Camofox tab %s returned %s — tab is gone. Creating a fresh tab.",
                            session["tab_id"], e.response.status_code)
-            session["tab_id"] = None
+            client.set_session_tab(session, None)
     session, created = client.ensure_tab(task_id, browser_url)
     return session, {**created, "tab_created": True}
 
